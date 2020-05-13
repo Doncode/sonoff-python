@@ -38,19 +38,41 @@ Here's a really simple example of how you can use this library.
 
 ```
 import sonoff
-import config
+import json
+import signal
+import sys
+import requests
 
-s = sonoff.Sonoff(config.username, config.password, config.api_region)
-devices = s.get_devices()
-if devices:
-    # We found a device, lets turn something on
-    device_id = devices[0]['deviceid']
-    s.switch('on', device_id, None)
+device_name = 'SonoffBridge'
+sensor_name = 'Motion sensor 1'
 
-# update config
-config.api_region = s.get_api_region
-config.user_apikey = s.get_user_apikey
-config.bearer_token = s.get_bearer_token
+def signal_handler(signal, frame):
+    sys.exit(0)
+
+def on_message(*args):
+    data = json.loads(args[-1])
+    print(data)
+
+def on_error(*args):
+    print(args[-1])
+
+def main():
+    signal.signal(signal.SIGINT, signal_handler)
+
+    connection = sonoff.Sonoff(
+        'username',
+        'password',
+        'eu'
+    )
+
+    for device in connection.get_devices():
+        if device['name'] == device_name:
+            device_data = connection.get_device(device['deviceid'])
+            connection.wait_for_notice(device['deviceid'], on_message, on_error)
+            break
+
+if __name__ == '__main__':
+    main()
 ```
 
 ## Support
