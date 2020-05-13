@@ -1,19 +1,29 @@
 # The domain of your component. Should be equal to the name of your component.
-import logging, time, hmac, hashlib, random, base64, json, socket, requests, re, uuid
+import logging
+import time
+import hmac
+import hashlib
+import random
+import base64
+import json
+import socket
+import requests
+import re
+import ssl
+
 from datetime import timedelta
+from sonoff.device_listener import WebsocketListener
 
 SCAN_INTERVAL = timedelta(seconds=60)
 HTTP_MOVED_PERMANENTLY, HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED, HTTP_NOT_FOUND = 301,400,401,404
 
-_LOGGER = logging.getLogger(__name__)
-
+logger = logging.getLogger(__name__)
 
 def gen_nonce(length=8):
     """Generate pseudorandom number."""
     return ''.join([str(random.randint(0, 9)) for i in range(length)])
 
 class Sonoff():
-    # def __init__(self, hass, email, password, api_region, grace_period):
     def __init__(self, username, password, api_region, user_apikey=None, bearer_token=None, grace_period=600):
 
         self._username      = username
@@ -58,21 +68,22 @@ class Sonoff():
             self.do_login()
 
     def do_login(self):
+        import uuid
 
         # reset the grace period
         self._skipped_login = 0
         
         app_details = {
             'password'  : self._password,
-            'version'   : self._version,
+            'version'   : '6',
             'ts'        : int(time.time()),
             'nonce'     : gen_nonce(15),
-            'appid'     : self._appid,
+            'appid'     : 'oeVkj2lYFGnJu5XUtWisfW4utiN4u9Mq',
             'imei'      : str(uuid.uuid4()),
-            'os'        : self._os,
-            'model'     : self._model,
-            'romVersion': self._rom_version,
-            'appVersion': self._app_version
+            'os'        : 'iOS',
+            'model'     : 'iPhone10,6',
+            'romVersion': '11.1.2',
+            'appVersion': '3.5.3'
         }
 
         if re.match(r'[^@]+@[^@]+\.[^@]+', self._username):
@@ -94,34 +105,35 @@ class Sonoff():
             'Content-Type'  : 'application/json;charset=UTF-8'
         }
 
-        r = requests.post('https://{}-api.coolkit.cc:8080/api/user/login'.format(self._api_region), 
-            headers=self._headers, json=app_details)
-
-        resp = r.json()
+        response = requests.post(
+            f'https://{self._api_region}-api.coolkit.cc:8080/api/user/login', 
+            headers=self._headers, 
+            json=app_details
+        ).json()
 
         # get a new region to login
-        if 'error' in resp and 'region' in resp and resp['error'] == HTTP_MOVED_PERMANENTLY:
-            self._api_region    = resp['region']
+        if 'error' in response and 'region' in response and response['error'] == HTTP_MOVED_PERMANENTLY:
+            self._api_region  = response['region']
 
-            _LOGGER.warning("found new region: >>> %s <<< (you should change api_region option to this value in configuration.yaml)", self._api_region)
+            logger.warning(f'Change api_region option to {self._api_region}')
 
             # re-login using the new localized endpoint
             self.do_login()
             return
 
-        elif 'error' in resp and resp['error'] in [HTTP_NOT_FOUND, HTTP_BAD_REQUEST]:
+        elif 'error' in response and response['error'] in [HTTP_NOT_FOUND, HTTP_BAD_REQUEST]:
             # (most likely) login with +86... phone number and region != cn
             if '@' not in self._username and self._api_region != 'cn':
                 self._api_region    = 'cn'
                 self.do_login()
 
             else:
-                _LOGGER.error("Couldn't authenticate using the provided credentials!")
+                logger.error("Couldn't authenticate using the provided credentials!")
 
             return
 
-        self._bearer_token  = resp['at']
-        self._user_apikey   = resp['user']['apikey']
+        self._bearer_token  = response['at']
+        self._user_apikey   = response['user']['apikey']
         self._headers.update({'Authorization' : 'Bearer ' + self._bearer_token})
 
         # get the websocket host
@@ -131,12 +143,14 @@ class Sonoff():
         self.update_devices() # to get the devices list 
 
     def set_wshost(self):
-        r = requests.post('https://%s-disp.coolkit.cc:8080/dispatch/app' % self._api_region, headers=self._headers)
-        resp = r.json()
+        response = requests.post(
+            f'https://{self._api_region}-disp.coolkit.cc:8080/dispatch/app',
+            headers=self._headers
+        ).json()
 
-        if 'error' in resp and resp['error'] == 0 and 'domain' in resp:
-            self._wshost = resp['domain']
-            _LOGGER.info("Found websocket address: %s", self._wshost)
+        if 'error' in response and response['error'] == 0 and 'domain' in response:
+            self._wshost = response['domain']
+            logger.info(f'Found websocket address: {self._wshost}')
         else:
             raise Exception('No websocket domain')
 
@@ -157,39 +171,29 @@ class Sonoff():
 
         # we are in the grace period, no updates to the devices
         if self._skipped_login and self.is_grace_period():          
-            _LOGGER.info("Grace period active")            
+            logger.info("Grace period active")            
             return self._devices
 
-        query_params = {
-            'lang': 'en',
-            'version': self._version,
-            'ts': int(time.time()),
-            'nonce': gen_nonce(15),
-            'appid': self._appid,
-            'imei': str(uuid.uuid4()),
-            'os': self._os,
-            'model': self._model,
-            'romVersion': self._rom_version,
-            'appVersion': self._app_version
-        }
-        r = requests.get('https://{}-api.coolkit.cc:8080/api/user/device'.format(self._api_region),
-                         params=query_params,
-                         headers=self._headers)
 
-        resp = r.json()
-        if 'error' in resp and resp['error'] in [HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED]:
+        response = requests.get(
+            f'https://{self._api_region}-api.coolkit.cc:8080/api/user/device?lang=en&apiKey=\
+                {self._user_apikey}&getTags=1&appid=oeVkj2lYFGnJu5XUtWisfW4utiN4u9Mq',
+            headers=self._headers
+        ).json()
+
+        if 'error' in response and response['error'] in [HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED]:
             # @IMPROVE add maybe a service call / switch to deactivate sonoff component
             if self.is_grace_period():
-                _LOGGER.warning("Grace period activated!")
+                logger.warning("Grace period activated!")
 
                 # return the current (and possible old) state of devices
                 # in this period any change made with the mobile app (on/off) won't be shown in HA
                 return self._devices
 
-            _LOGGER.info("Re-login component")
+            logger.info("Re-login component")
             self.do_login()
 
-        self._devices = resp.get('devicelist', [])
+        self._devices = response
         return self._devices
 
     def get_devices(self, force_update = False):
@@ -211,6 +215,30 @@ class Sonoff():
 
     def get_user_apikey(self):
         return self._user_apikey
+    
+    def get_model(self):
+        return self._model
+
+    def get_romVersion(self):
+        return self._rom_version
+
+    def wait_for_notice(self, deviceid, on_message, on_error):
+        self.set_wshost()
+
+        while True:
+            logger.debug('(re)init websocket')
+
+            self._ws = WebsocketListener(
+                sonoff=self,
+                on_message=on_message, 
+                on_error=on_error
+            )
+
+            try:
+                # 145 interval is defined by the first websocket response after login
+                self._ws.run_forever(ping_interval=145)
+            finally:
+                self._ws.close()
 
     def _get_ws(self):
         """Check if the websocket is setup and connected."""
@@ -221,7 +249,13 @@ class Sonoff():
 
         if self._ws is None:
             try:
-                self._ws = create_connection(('wss://{}:8080/api/ws'.format(self._wshost)), timeout=10)
+                self._ws = create_connection(
+                    f'wss://{self._wshost}:8080/api/ws',
+                    timeout=10, 
+                    sslopt={
+                        "cert_reqs": ssl.CERT_NONE
+                    }
+                )
 
                 payload = {
                     'action'    : "userOnline",
@@ -240,10 +274,10 @@ class Sonoff():
 
                 self._ws.send(json.dumps(payload))
                 wsresp = self._ws.recv()
-                # _LOGGER.error("open socket: %s", wsresp)
+                # logger.error("open socket: %s", wsresp)
 
             except (socket.timeout, ConnectionRefusedError, ConnectionResetError):
-                _LOGGER.error('failed to create the websocket')
+                logger.error('failed to create the websocket')
                 self._ws = None
 
         return self._ws
@@ -253,13 +287,13 @@ class Sonoff():
 
         # we're in the grace period, no state change
         if self._skipped_login:
-            _LOGGER.info("Grace period, no state change")
+            logger.info("Grace period, no state change")
             return (not new_state)
 
         self._ws = self._get_ws()
         
         if not self._ws:
-            _LOGGER.warning('invalid websocket, state cannot be changed')
+            logger.warning('invalid websocket, state cannot be changed')
             return (not new_state)
 
         # convert from True/False to on/off
@@ -269,13 +303,14 @@ class Sonoff():
         device = self.get_device(deviceid)
 
         if outlet is not None:
-            _LOGGER.debug("Switching `%s - %s` on outlet %d to state: %s", \
-                device['deviceid'], device['name'] , (outlet+1) , new_state)
+            logger.debug(
+                f"Switching `{device['deviceid']} - {device['name']}` on outlet {(outlet+1)} to state: {new_state}"
+            )
         else:
-            _LOGGER.debug("Switching `%s` to state: %s", deviceid, new_state)
+            logger.debug(f"Switching `{deviceid}` to state: {new_state}")
 
         if not device:
-            _LOGGER.error('unknown device to be updated')
+            logger.error('unknown device to be updated')
             return False
 
         # the payload rule is like this:
@@ -310,7 +345,7 @@ class Sonoff():
 
         self._ws.send(json.dumps(payload))
         wsresp = self._ws.recv()
-        # _LOGGER.debug("switch socket: %s", wsresp)
+        # logger.debug("switch socket: %s", wsresp)
         
         self._ws.close() # no need to keep websocket open (for now)
         self._ws = None
@@ -328,4 +363,3 @@ class Sonoff():
         # only IF MAIN STATUS is done over websocket exclusively
 
         return new_state
-
