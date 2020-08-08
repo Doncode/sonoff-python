@@ -10,6 +10,7 @@ import socket
 import requests
 import re
 import ssl
+import datetime
 
 from datetime import timedelta
 from sonoff.device_listener import WebsocketListener
@@ -20,7 +21,7 @@ HTTP_MOVED_PERMANENTLY, HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED, HTTP_NOT_FOUND = 30
 logger = logging.getLogger(__name__)
 
 def gen_nonce(length=8):
-    """Generate pseudorandom number."""
+    #Generate pseudorandom number.
     return ''.join([str(random.randint(0, 9)) for i in range(length)])
 
 class Sonoff():
@@ -221,6 +222,8 @@ class Sonoff():
 
     def get_romVersion(self):
         return self._rom_version
+    def get_appid(self):
+        return self._appid
 
     def wait_for_notice(self, deviceid, on_message, on_error):
         self.set_wshost()
@@ -363,3 +366,62 @@ class Sonoff():
         # only IF MAIN STATUS is done over websocket exclusively
 
         return new_state
+    
+    
+    def get_power(self, deviceid):
+        # get power usage
+                # we're in the grace period, no state change
+        if self._skipped_login:
+            logger.info("Grace period, no state change")
+            return (not new_state)
+
+        self._ws = self._get_ws()
+        
+        if not self._ws:
+            logger.warning('invalid websocket, state cannot be changed')
+            return (not new_state)
+        device = self.get_device(deviceid)
+       
+        payloadUpdate = {
+            'action'    : 'update',
+            'apikey'    : device['apikey'],
+            'deviceid'  : str(deviceid),
+            'selfApikey': device['apikey'],
+            'params'    : {'hundredDaysKwh' : 'get'} ,
+            'ts'        : str(int(time.time())),
+            'userAgent' : 'app',
+            'sequence'  : str(time.time()).replace('.',''),
+            'controlType' : 4
+        }
+       
+                # this key is needed for a shared device
+        if device['apikey'] != self.get_user_apikey():
+            payloadUpdate['selfApikey'] = self.get_user_apikey()
+
+        self._ws.send(json.dumps(payloadUpdate))
+        wsresp = self._ws.recv()
+ #       print('response:')
+ #       print(wsresp)
+        # logger.debug("switch socket: %s", wsresp)
+        
+        self._ws.close() # no need to keep websocket open (for now)
+        self._ws = None
+        rawPowerJson=json.loads(wsresp)
+        rawPower=rawPowerJson['config']['hundredDaysKwhData']
+        dayConsumption = 0
+        monthConsumption = 0
+        days = datetime.datetime.now().day
+        for day in range(0, days):
+            s = rawPower[6*day:6*day+2]
+            c = rawPower[6*day+2:6*day+4]
+            f = rawPower[6*day+4:6*day+6]
+            h = int(s,base=16)
+            y = int(c,base=16)
+            I = int(f,base=16)
+            E = float(''.join([str(h),'.',str(y),str(I)]))
+            monthConsumption=monthConsumption+E
+            if day==0 :
+                dayConsumption=E
+        
+        return [dayConsumption,monthConsumption]
+    
