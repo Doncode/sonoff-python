@@ -102,8 +102,8 @@ class Sonoff():
 
         r = requests.post('https://{}-api.coolkit.cc:8080/api/user/login'.format(self._api_region), 
             headers=self._headers, json=app_details)
-
         resp = r.json()
+
         # get a new region to login
         if 'error' in resp and 'region' in resp and resp['error'] == HTTP_MOVED_PERMANENTLY:
             self._api_region    = resp['region']
@@ -230,7 +230,6 @@ class Sonoff():
 
                 self._ws.send(json.dumps(payload))
                 wsresp = self._ws.recv()                
-                
                 # _LOGGER.error("open socket: %s", wsresp)
 
             except (socket.timeout, ConnectionRefusedError, ConnectionResetError):
@@ -320,6 +319,39 @@ class Sonoff():
 
         return new_state
 
+    def set_timezone(self, deviceid, timezone):
+        if self._skipped_login:
+            _LOGGER.info("Grace period, no state change")
+            return ("Grace period, no state change")
+
+        self._ws = self._get_ws()
+        if not self._ws:
+            _LOGGER.warning('invalid websocket, state cannot be changed')
+            return ('invalid websocket, state cannot be changed')
+        device = self.get_device(deviceid)
+        # print(device)
+        payloadUpdate = {
+            'action'    : 'update',
+            'apikey'    : device['apikey'],
+            'deviceid'  : str(deviceid),
+            'selfApikey': device['apikey'],
+            'params'    : {'timeZone' : timezone} ,
+            'ts'        : 0,
+            'userAgent' : 'app',
+            'sequence'  : str(time.time()).replace('.',''),
+            'controlType' : 4
+        }
+        
+        # this key is needed for a shared device
+        if device['apikey'] != self.get_user_apikey():
+            payloadUpdate['selfApikey'] = self.get_user_apikey()
+        self._ws.send(json.dumps(payloadUpdate))
+        wsresp = self._ws.recv()
+        self._ws.close() # no need to keep websocket open (for now)
+        self._ws = None
+        resp=json.loads(wsresp)
+        return resp
+
     def get_power(self, deviceid):
         # get power usage
                 # we're in the grace period, no state change
@@ -332,6 +364,7 @@ class Sonoff():
             _LOGGER.warning('invalid websocket, state cannot be changed')
             return ('invalid websocket, state cannot be changed')
         device = self.get_device(deviceid)
+        # print(device)
         payloadUpdate = {
             'action'    : 'update',
             'apikey'    : device['apikey'],
@@ -344,16 +377,14 @@ class Sonoff():
             'controlType' : 4
         }
         
-       
-                # this key is needed for a shared device
+        # this key is needed for a shared device
         if device['apikey'] != self.get_user_apikey():
             payloadUpdate['selfApikey'] = self.get_user_apikey()
         self._ws.send(json.dumps(payloadUpdate))
         wsresp = self._ws.recv()
-       
         self._ws.close() # no need to keep websocket open (for now)
         self._ws = None
-        rawPowerJson=json.loads(wsresp)
+        rawPowerJson=json.loads(wsresp)        
         rawPower=rawPowerJson['config']['hundredDaysKwhData']
         dayConsumption = 0
         monthConsumption = 0
@@ -369,5 +400,6 @@ class Sonoff():
             monthConsumption=monthConsumption+E
             if day==0 :
                 dayConsumption=E
+        power=float(device['params']['power'])
+        return [dayConsumption,monthConsumption,power]
         
-        return [dayConsumption,monthConsumption]
