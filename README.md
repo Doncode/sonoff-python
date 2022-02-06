@@ -13,7 +13,7 @@ I finally came across Peter's work written in python and it was exactly what I w
 
 Use pip or easy_install
 
-> pip install sonoff-python
+> pip install git+https://github.com/Baton34/sonoff-python
 
 The requirements are requests and websocket-client, see _requirements.txt_
 
@@ -38,38 +38,19 @@ Here's a really simple example of how you can use this library.
 
 ```
 import sonoff
-import json
-import signal
-import sys
-import requests
 
 device_name = 'SonoffBridge'
 sensor_name = 'Motion sensor 1'
 
-def signal_handler(signal, frame):
-    sys.exit(0)
-
-def on_message(*args):
-    data = json.loads(args[-1])
-    print(data)
-
-def on_error(*args):
-    print(args[-1])
-
 def main():
-    signal.signal(signal.SIGINT, signal_handler)
-
-    connection = sonoff.Sonoff(
-        'username',
-        'password',
-        'eu'
-    )
+    connection = sonoff.Sonoff('username', 'password', 'eu')
 
     for device in connection.get_devices():
+        print(device['name'])
+        
         if device['name'] == device_name:
             device_data = connection.get_device(device['deviceid'])
-            connection.wait_for_notice(device['deviceid'], on_message, on_error)
-            break
+            print(device_data)
 
 if __name__ == '__main__':
     main()
