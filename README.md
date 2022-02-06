@@ -13,7 +13,7 @@ I finally came across Peter's work written in python and it was exactly what I w
 
 Use pip or easy_install
 
-> pip install git+https://github.com/Baton34/sonoff-python
+> pip install git+https://github.com/Doncode/sonoff-python
 
 The requirements are requests and websocket-client, see _requirements.txt_
 
