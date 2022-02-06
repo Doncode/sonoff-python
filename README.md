@@ -40,7 +40,6 @@ Here's a really simple example of how you can use this library.
 import sonoff
 
 device_name = 'SonoffBridge'
-sensor_name = 'Motion sensor 1'
 
 def main():
     connection = sonoff.Sonoff('username', 'password', 'eu')
