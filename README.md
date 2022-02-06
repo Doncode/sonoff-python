@@ -13,7 +13,7 @@ I finally came across Peter's work written in python and it was exactly what I w
 
 Use pip or easy_install
 
-> pip install sonoff-python
+> pip install git+https://github.com/Baton34/sonoff-python
 
 The requirements are requests and websocket-client, see _requirements.txt_
 
@@ -38,19 +38,21 @@ Here's a really simple example of how you can use this library.
 
 ```
 import sonoff
-import config
 
-s = sonoff.Sonoff(config.username, config.password, config.api_region)
-devices = s.get_devices()
-if devices:
-    # We found a device, lets turn something on
-    device_id = devices[0]['deviceid']
-    s.switch('on', device_id, None)
+device_name = 'SonoffBridge'
 
-# update config
-config.api_region = s.get_api_region
-config.user_apikey = s.get_user_apikey
-config.bearer_token = s.get_bearer_token
+def main():
+    connection = sonoff.Sonoff('username', 'password', 'eu')
+
+    for device in connection.get_devices():
+        print(device['name'])
+        
+        if device['name'] == device_name:
+            device_data = connection.get_device(device['deviceid'])
+            print(device_data)
+
+if __name__ == '__main__':
+    main()
 ```
 
 ## Support
